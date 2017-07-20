@@ -36,9 +36,10 @@ if ($step > count ($stepfunc))
 }
 $title = "RackTables installation: step ${step} of " . count ($stepfunc);
 header ('Content-Type: text/html; charset=UTF-8');
-?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+	echo <<<ENDOFTEXT
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
-<head><title><?php echo $title; ?></title>
+<head><title>${title}</title>
 <style type="text/css">
 .tdleft {
 	text-align: left;
@@ -59,7 +60,7 @@ header ('Content-Type: text/html; charset=UTF-8');
 </head>
 <body>
 <center>
-<?php
+ENDOFTEXT;
 echo "<h1>${title}</h1><p>";
 
 echo "</p><form method=post>\n";
@@ -75,14 +76,10 @@ else
 	echo "<br><input type=submit value='retry'>";
 }
 echo "<input type=hidden name=step value='${next_step}'>\n";
-
-?>
-</form>
-</center>
-</body>
-</html>
-
-<?php
+	echo '</form>';
+	echo '</center>';
+	echo '</body>';
+	echo '</html>';
 }
 
 // Check if the software is already installed.
@@ -301,10 +298,8 @@ function init_config ()
 # here, it will be readable by unauthorized visitors.
 #\$helpdesk_banner = '<B>This RackTables instance is supported by Example Inc. IT helpdesk, dial ext. 1234 to report a problem.</B>';
 
-
 ENDOFTEXT
 );
-	fwrite ($conf, "?>\n");
 	fclose ($conf);
 	echo "The configuration file has been written successfully.<br>";
 	return TRUE;
@@ -1089,6 +1084,7 @@ function get_pseudo_file ($name)
   `parent_id` int(10) unsigned default NULL,
   `is_assignable` enum('yes','no') NOT NULL DEFAULT 'yes',
   `tag` char(255) default NULL,
+  `color` mediumint(8) unsigned DEFAULT NULL,
   PRIMARY KEY  (`id`),
   UNIQUE KEY `tag` (`tag`),
   KEY `TagTree-K-parent_id` (`parent_id`),
@@ -2327,5 +2323,3 @@ WHERE O.objtype_id = 1562";
 	return $query;
 	}
 }
-
-?>

@@ -495,6 +495,7 @@ function listCells ($realm, $parent_id = 0)
 				'id' => $tag_id,
 				'tag' => $taglist[$tag_id]['tag'],
 				'parent_id' => $taglist[$tag_id]['parent_id'],
+				'color' =>  $taglist[$tag_id]['color'],
 				'user' => $row['tag_user'],
 				'time' => $row['tag_time'],
 			);
@@ -607,6 +608,7 @@ function spotEntity ($realm, $id, $ignore_cache = FALSE)
 					'id' => $row['tag_id'],
 					'tag' => $taglist[$row['tag_id']]['tag'],
 					'parent_id' => $taglist[$row['tag_id']]['parent_id'],
+					'color' =>  $taglist[$row['tag_id']]['color'],
 					'user' => $row['tag_user'],
 					'time' => $row['tag_time'],
 				);
@@ -617,6 +619,7 @@ function spotEntity ($realm, $id, $ignore_cache = FALSE)
 				'id' => $row['tag_id'],
 				'tag' => $taglist[$row['tag_id']]['tag'],
 				'parent_id' => $taglist[$row['tag_id']]['parent_id'],
+				'color' =>  $taglist[$row['tag_id']]['color'],
 				'user' => $row['tag_user'],
 				'time' => $row['tag_time'],
 			);
@@ -849,6 +852,7 @@ SELECT
 	IF(la.porta, pa.name, pb.name) AS remote_name,
 	IF(la.porta, pa.object_id, pb.object_id) AS remote_object_id,
 	IF(la.porta, oa.name, ob.name) AS remote_object_name,
+	IF(la.porta, oa.objtype_id, ob.objtype_id) AS remote_object_tid,
 	(SELECT COUNT(*) FROM PortLog WHERE PortLog.port_id = Port.id) AS log_count,
 	PortLog.user,
 	UNIX_TIMESTAMP(PortLog.date) as time
@@ -1586,8 +1590,7 @@ function getMolecule ($mid)
 function lastInsertID ()
 {
 	$result = usePreparedSelectBlade ('select last_insert_id()');
-	$row = $result->fetch (PDO::FETCH_NUM);
-	return $row[0];
+	return $result->fetchColumn();
 }
 
 // This function creates a new record in Molecule and number of linked
@@ -1716,7 +1719,7 @@ function commitAddPortReal ($object_id, $port_name, $iif_id, $oif_id, $port_labe
 		(
 			'name' => $port_name,
 			'object_id' => $object_id,
-			'label' => $port_label,
+			'label' => nullIfEmptyStr ($port_label),
 			'iif_id' => $iif_id,
 			'type' => $oif_id,
 			'l2address' => nullIfEmptyStr ($db_l2address),
@@ -1767,7 +1770,7 @@ function commitUpdatePortReal ($object_id, $port_id, $port_name, $iif_id, $oif_i
 			'name' => $port_name,
 			'iif_id' => $iif_id,
 			'type' => $oif_id,
-			'label' => $port_label,
+			'label' => nullIfEmptyStr ($port_label),
 			'reservation_comment' => $port_reservation_comment,
 			'l2address' => nullIfEmptyStr ($db_l2address),
 		),
@@ -2104,7 +2107,8 @@ function scanIPv4Space ($pairlist, $filter_flags = IPSCAN_ANY)
 	$whereexpr4 = '(';
 	$whereexpr5a = '(';
 	$whereexpr5b = '(';
-	$whereexpr6 = '(';
+	$whereexpr6a = '(';
+	$whereexpr6b = '(';
 	$qparams = array();
 	$qparams_bin = array();
 	foreach ($pairlist as $tmp)
@@ -2116,7 +2120,8 @@ function scanIPv4Space ($pairlist, $filter_flags = IPSCAN_ANY)
 		$whereexpr4 .= $or . "rsip between ? and ?";
 		$whereexpr5a .= $or . "remoteip between ? and ?";
 		$whereexpr5b .= $or . "localip between ? and ?";
-		$whereexpr6 .= $or . "l.ip between ? and ?";
+		$whereexpr6a .= $or . "ip between ? and ?";
+		$whereexpr6b .= $or . "l.ip between ? and ?";
 		$or = ' or ';
 		$qparams[] = ip4_bin2db ($tmp['first']);
 		$qparams[] = ip4_bin2db ($tmp['last']);
@@ -2130,7 +2135,8 @@ function scanIPv4Space ($pairlist, $filter_flags = IPSCAN_ANY)
 	$whereexpr4 .= ')';
 	$whereexpr5a .= ')';
 	$whereexpr5b .= ')';
-	$whereexpr6 .= ')';
+	$whereexpr6a .= ')';
+	$whereexpr6b .= ')';
 
 	// 1. collect labels and reservations
 	if ($filter_flags & IPSCAN_DO_ADDR)
@@ -2279,8 +2285,8 @@ function scanIPv4Space ($pairlist, $filter_flags = IPSCAN_ANY)
 	if ($filter_flags & IPSCAN_DO_LOG)
 	{
 	$query = "select l.ip, l.user, UNIX_TIMESTAMP(l.date) AS time from IPv4Log l INNER JOIN " .
-		" (SELECT MAX(id) as id FROM IPv4Log GROUP BY ip) v USING (id) WHERE ${whereexpr6}";
-	$result = usePreparedSelectBlade ($query, $qparams);
+		" (SELECT MAX(id) as id FROM IPv4Log WHERE ${whereexpr6a} GROUP BY ip) v USING (id) WHERE ${whereexpr6b}";
+	$result = usePreparedSelectBlade ($query, array_merge ($qparams, $qparams));
 	while ($row = $result->fetch (PDO::FETCH_ASSOC))
 	{
 		$ip_bin = ip4_int2bin ($row['ip']);
@@ -2318,7 +2324,8 @@ function scanIPv6Space ($pairlist, $filter_flags = IPSCAN_ANY)
 	$whereexpr3a = '(';
 	$whereexpr3b = '(';
 	$whereexpr4 = '(';
-	$whereexpr6 = '(';
+	$whereexpr6a = '(';
+	$whereexpr6b = '(';
 	$qparams = array();
 	foreach ($pairlist as $tmp)
 	{
@@ -2327,7 +2334,8 @@ function scanIPv6Space ($pairlist, $filter_flags = IPSCAN_ANY)
 		$whereexpr3a .= $or . "vip between ? and ?";
 		$whereexpr3b .= $or . "vip between ? and ?";
 		$whereexpr4 .= $or . "rsip between ? and ?";
-		$whereexpr6 .= $or . "l.ip between ? and ?";
+		$whereexpr6a .= $or . "ip between ? and ?";
+		$whereexpr6b .= $or . "l.ip between ? and ?";
 		$or = ' or ';
 		$qparams[] = $tmp['first'];
 		$qparams[] = $tmp['last'];
@@ -2337,7 +2345,8 @@ function scanIPv6Space ($pairlist, $filter_flags = IPSCAN_ANY)
 	$whereexpr3a .= ')';
 	$whereexpr3b .= ')';
 	$whereexpr4 .= ')';
-	$whereexpr6 .= ')';
+	$whereexpr6a .= ')';
+	$whereexpr6b .= ')';
 
 	// 1. collect labels and reservations
 	if ($filter_flags & IPSCAN_DO_ADDR)
@@ -2430,8 +2439,8 @@ function scanIPv6Space ($pairlist, $filter_flags = IPSCAN_ANY)
 	if ($filter_flags & IPSCAN_DO_LOG)
 	{
 	$query = "select l.ip, l.user, UNIX_TIMESTAMP(l.date) AS time from IPv6Log l INNER JOIN " .
-		" (SELECT MAX(id) as id FROM IPv6Log GROUP BY ip) v USING (id) WHERE ${whereexpr6}";
-	$result = usePreparedSelectBlade ($query, $qparams);
+		" (SELECT MAX(id) as id FROM IPv6Log WHERE ${whereexpr6a} GROUP BY ip) v USING (id) WHERE ${whereexpr6b}";
+	$result = usePreparedSelectBlade ($query, array_merge ($qparams, $qparams));
 	while ($row = $result->fetch (PDO::FETCH_ASSOC))
 	{
 		$ip_bin = $row['ip'];
@@ -3518,8 +3527,7 @@ function getIPv4Stats ()
 	foreach ($subject as $item)
 	{
 		$result = usePreparedSelectBlade ($item['q']);
-		$row = $result->fetch (PDO::FETCH_NUM);
-		$ret[$item['txt']] = $row[0];
+		$ret[$item['txt']] = $result->fetchColumn();
 		unset ($result);
 	}
 	return $ret;
@@ -3536,8 +3544,7 @@ function getIPv6Stats ()
 	foreach ($subject as $item)
 	{
 		$result = usePreparedSelectBlade ($item['q']);
-		$row = $result->fetch (PDO::FETCH_NUM);
-		$ret[$item['txt']] = $row[0];
+		$ret[$item['txt']] = $result->fetchColumn();
 		unset ($result);
 	}
 	return $ret;
@@ -3555,8 +3562,8 @@ function getRackspaceStats ()
 	foreach ($subject as $item)
 	{
 		$result = usePreparedSelectBlade ($item['q']);
-		$row = $result->fetch (PDO::FETCH_NUM);
-		$ret[$item['txt']] = $row[0] == '' ? 0 : $row[0];
+		$tmp = $result->fetchColumn();
+		$ret[$item['txt']] = $tmp == '' ? 0 : $tmp;
 		unset ($result);
 	}
 	return $ret;
@@ -3786,8 +3793,7 @@ function fetchAttrsForObjects ($object_set = array())
 				$record['value'] = $row['uint_value'];
 				break;
 			default:
-				$record['value'] = NULL;
-				break;
+				throw new RackTablesError ("unexpected attribute type '${row['attr_type']}'", RackTablesError::INTERNAL);
 		}
 		$ret[$object_id][$row['attr_id']] = $record;
 	}
@@ -3899,10 +3905,29 @@ function convertPDOException ($e)
 	case 'HY000-1205':
 		$text = 'lock wait timeout';
 		break;
+	case '42000-1142':
+		return new RTDBTableAccessDenied ($e->getMessage());
 	default:
 		return $e;
 	}
 	return new RTDatabaseError ($text);
+}
+
+// The strict SQL mode, which is the default since MySQL 5.7 and MariaDB 10.2.4,
+// generates an error (and in this case a PDO exception) when a column value is
+// invalid or missing. When the strict SQL mode is not enabled (for whatever
+// reason), the invalid or missing values (as well as other anomalies) end up in
+// the warnings buffer and remain out of sight by default. This function saves
+// the contents of the buffer such that it can be displayed later.
+function collectMySQLWarnings()
+{
+	global $dbxlink, $debug_mode, $rtdebug_mysql_warnings;
+	if (! isset ($debug_mode) || ! $debug_mode)
+		return;
+	if (! isset ($rtdebug_mysql_warnings))
+		$rtdebug_mysql_warnings = array();
+	$result = $dbxlink->query ('SHOW WARNINGS');
+	$rtdebug_mysql_warnings = array_merge ($rtdebug_mysql_warnings, $result->fetchAll (PDO::FETCH_ASSOC));
 }
 
 // This is a swiss-knife blade to insert a record into a table.
@@ -3920,7 +3945,10 @@ function usePreparedInsertBlade ($tablename, $columns)
 	{
 		$prepared = $dbxlink->prepare ($query);
 		$prepared->execute (array_values ($columns));
-		return $prepared->rowCount();
+		$ret = $prepared->rowCount();
+		unset ($prepared);
+		collectMySQLWarnings();
+		return $ret;
 	}
 	catch (PDOException $e)
 	{
@@ -3967,7 +3995,7 @@ function makeWhereSQL ($where_columns, $conjunction, &$params = array())
 // This swiss-knife blade deletes any number of records from the specified table
 // using the specified key names and values.
 // returns integer - affected rows count. Throws exception on error
-function usePreparedDeleteBlade ($tablename, $columns = array(), $conjunction = 'AND')
+function usePreparedDeleteBlade ($tablename, $columns, $conjunction = 'AND')
 {
 	global $dbxlink;
 	if (! count ($columns))
@@ -3977,7 +4005,10 @@ function usePreparedDeleteBlade ($tablename, $columns = array(), $conjunction = 
 	{
 		$prepared = $dbxlink->prepare ($query);
 		$prepared->execute ($where_values);
-		return $prepared->rowCount();
+		$ret = $prepared->rowCount();
+		unset ($prepared);
+		collectMySQLWarnings();
+		return $ret;
 	}
 	catch (PDOException $e)
 	{
@@ -4001,7 +4032,7 @@ function usePreparedSelectBlade ($query, $args = array())
 }
 
 // returns integer - affected rows count. Throws exception on error
-function usePreparedUpdateBlade ($tablename, $set_columns = array(), $where_columns = array(), $conjunction = 'AND')
+function usePreparedUpdateBlade ($tablename, $set_columns, $where_columns, $conjunction = 'AND')
 {
 	global $dbxlink;
 	if (! count ($set_columns))
@@ -4014,7 +4045,10 @@ function usePreparedUpdateBlade ($tablename, $set_columns = array(), $where_colu
 	{
 		$prepared = $dbxlink->prepare ($query);
 		$prepared->execute (array_merge (array_values ($set_columns), $where_values));
-		return $prepared->rowCount();
+		$ret = $prepared->rowCount();
+		unset ($prepared);
+		collectMySQLWarnings();
+		return $ret;
 	}
 	catch (PDOException $e)
 	{
@@ -4053,14 +4087,27 @@ function loadUserConfigCache ($username)
 	return reindexById ($result->fetchAll (PDO::FETCH_ASSOC), 'varname');
 }
 
-function loadThumbCache ($rack_id)
+function loadRackThumbCache ($rack_id)
 {
-	$ret = NULL;
 	$result = usePreparedSelectBlade ('SELECT thumb_data FROM RackThumbnail WHERE rack_id = ? AND thumb_data IS NOT NULL', array ($rack_id));
 	$row = $result->fetch (PDO::FETCH_ASSOC);
-	if ($row)
-		$ret = base64_decode ($row['thumb_data']);
-	return $ret;
+	return $row ? $row['thumb_data'] : NULL;
+}
+
+function saveRackThumbCache ($rack_id, $thumb_data)
+{
+	global $dbxlink;
+	try
+	{
+		$query = $dbxlink->prepare ('REPLACE INTO RackThumbnail SET rack_id = ?, thumb_data = ?');
+		$query->bindParam (1, $rack_id);
+		$query->bindParam (2, $thumb_data, PDO::PARAM_LOB);
+		return $query->execute();
+	}
+	catch (PDOException $e)
+	{
+		throw convertPDOException ($e);
+	}
 }
 
 function executeAutoPorts ($object_id)
@@ -4256,7 +4303,11 @@ function generateEntityAutoTags ($cell)
 // results different from MySQL.
 function getTagList ($extra_sql = '')
 {
-	$result = usePreparedSelectBlade ("SELECT id, parent_id, is_assignable, tag FROM TagTree ORDER BY tag ${extra_sql}");
+	$result = usePreparedSelectBlade
+	(
+		'SELECT id, parent_id, is_assignable, tag, LPAD(HEX(color), 6, "0") AS color ' .
+		"FROM TagTree ORDER BY tag ${extra_sql}"
+	);
 	return reindexById ($result->fetchAll (PDO::FETCH_ASSOC));
 }
 
@@ -4302,7 +4353,7 @@ function deleteTagForEntity ($entity_realm, $entity_id, $tag_id)
 
 // A tag's parent may not be one of its children, the tag itself or a tag
 // that does not belong to the forest of rooted trees because of a cycle.
-function commitUpdateTag ($tag_id, $tag_name, $parent_id, $is_assignable)
+function commitUpdateTag ($tag_id, $tag_name, $parent_id, $is_assignable, $color = NULL)
 {
 	global $dbxlink;
 	$dbxlink->beginTransaction();
@@ -4317,10 +4368,13 @@ function commitUpdateTag ($tag_id, $tag_name, $parent_id, $is_assignable)
 			(
 				'tag' => $tag_name,
 				'parent_id' => nullIfZero ($parent_id),
-				'is_assignable' => $is_assignable
+				'is_assignable' => $is_assignable,
+				'color' => HTMLColorForDatabase ($color)
 			),
 			array ('id' => $tag_id)
 		);
+		// remove all rack thumbnails
+		usePreparedDeleteBlade ('RackThumbnail', array ('1' => '1'));
 		$dbxlink->commit();
 	}
 	catch (PDOException $pe)
@@ -4389,6 +4443,14 @@ function rebuildTagChainForEntity ($realm, $entity_id, $extrachain = array(), $r
 		addTagForEntity ($realm, $entity_id, $tag_id);
 		$result = TRUE;
 	}
+
+	// remove Rack thumbnail if Rack or Object tag changes
+	if ($result && ( $realm == 'rack' || $realm == 'object'))
+	{
+		$rack_id = $realm == 'rack' ? $entity_id : getResidentRacksData ($entity_id, FALSE);
+		usePreparedDeleteBlade ('RackThumbnail', array ('rack_id' => $rack_id));
+	}
+
 	return $result;
 }
 
@@ -5664,7 +5726,7 @@ function setConfigVar ($varname, $varvalue)
 		throw new InvalidArgException ('varname', $varname, 'a hidden variable cannot be changed');
 	if ($varvalue == '' && $var['emptyok'] != 'yes')
 		throw new InvalidArgException ('varvalue', $varvalue, "'${varname}' must have a non-empty value");
-	if ($varvalue != '' && $var['vartype'] == 'uint' && (! is_numeric ($varvalue) || $varvalue < 0 ))
+	if ($varvalue != '' && $var['vartype'] == 'uint' && ! isUnsignedInteger ($varvalue, TRUE))
 		throw new InvalidArgException ('varvalue', $varvalue, "'${varname}' must be an unsigned integer");
 	// Update cache only if the changes went into DB.
 	usePreparedUpdateBlade ('Config', array ('varvalue' => $varvalue), array ('varname' => $varname));
@@ -5687,12 +5749,12 @@ function setUserConfigVar ($varname, $varvalue)
 		throw new InvalidArgException ('varname', $varname, 'a hidden variable cannot be changed');
 	if ($varvalue == '' && $var['emptyok'] != 'yes')
 		throw new InvalidArgException ('varvalue', $varvalue, "'${varname}' must have a non-empty value");
-	if ($varvalue != '' && $var['vartype'] == 'uint' && (! is_numeric ($varvalue) || $varvalue < 0 ))
+	if ($varvalue != '' && $var['vartype'] == 'uint' && ! isUnsignedInteger ($varvalue, TRUE))
 		throw new InvalidArgException ('varvalue', $varvalue, "'${varname}' must be an unsigned integer");
 	// Update cache only if the changes went into DB.
 	usePreparedExecuteBlade
 	(
-		'REPLACE UserConfig SET varvalue=?, varname=?, user=?',
+		'REPLACE INTO UserConfig SET varvalue=?, varname=?, user=?',
 		array ($varvalue, $varname, $remote_username)
 	);
 	$configCache[$varname]['varvalue'] = $varvalue;
@@ -6042,5 +6104,3 @@ function releaseDBMutex ($name)
 	$row = $result->fetchColumn();
 	return $row === '1';
 }
-
-?>

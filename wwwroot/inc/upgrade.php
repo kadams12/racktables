@@ -158,7 +158,7 @@ installation. If desired so, you could eliminate the case-duplicating rows
 and re-apply the failed query.
 ENDOFTEXT
 ,
-        '0.20.11' => <<<ENDOFTEXT
+	'0.20.11' => <<<ENDOFTEXT
 New IPV4_TREE_SHOW_UNALLOCATED configuration option introduced to disable
 dsplaying unallocated networks in IPv4 space tree. Setting it also disables
 the "knight" feature.
@@ -192,6 +192,7 @@ function getDBUpgradePath ($v1, $v2)
 		'0.20.12',
 		'0.20.13',
 		'0.20.14',
+		'0.21.0',
 	);
 	if (! in_array ($v1, $versionhistory) || ! in_array ($v2, $versionhistory))
 		return NULL;
@@ -1223,10 +1224,12 @@ ENDOFTRIGGER;
 			$query[] = "DROP TRIGGER IF EXISTS `Port-before-update`";
 			$query[] = "UPDATE Config SET varvalue = '0.20.13' WHERE varname = 'DB_VERSION'";
 			break;
-		case '0.20.14':
-			$query[] = "UPDATE Object SET has_problems = 'no' WHERE objtype_id = 1561 AND has_problems = ''";
-			$query[] = "UPDATE ObjectHistory SET ctime = ctime, has_problems = 'no' WHERE objtype_id = 1561 AND has_problems = ''";
-			$query[] = "UPDATE Config SET varvalue = '0.20.14' WHERE varname = 'DB_VERSION'";
+		// FIXME: add remaining 0.20.x sections here after respective releases come out
+		case '0.21.0':
+			$query[] = "UPDATE Port SET label = NULL WHERE label = ''";
+			$query[] = "DELETE FROM RackThumbnail";
+			$query[] = "ALTER TABLE TagTree ADD COLUMN color mediumint unsigned DEFAULT NULL AFTER tag";
+			$query[] = "UPDATE Config SET varvalue = '0.21.0' WHERE varname = 'DB_VERSION'";
 			break;
 		case 'dictionary':
 			$query = reloadDictionary();
@@ -1360,17 +1363,18 @@ function renderUpgraderHTML()
 	{
 		header ('WWW-Authenticate: Basic realm="RackTables upgrade"');
 		header ('HTTP/1.0 401 Unauthorized');
-?>
+		echo <<<ENDOFTEXT
 <h1>Trouble logging in?</h1>
 You are trying to authenticate for the RackTables upgrade screen. This means that
 you must authenticate with the username and password of the main RackTables
 administrator. There is only one such account in each installation, its default
 username is "admin". RackTables wiki provides more information on this topic.
-<?php
+ENDOFTEXT;
 		die;
 	}
 
-?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+		echo <<<ENDOFTEXT
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
 <head><title>RackTables upgrade script</title>
 <style type="text/css">
@@ -1393,7 +1397,7 @@ username is "admin". RackTables wiki provides more information on this topic.
 </head>
 <body>
 <h1>Platform check status</h1>
-<?php
+ENDOFTEXT;
 
 if (!platform_is_ok())
 {
@@ -1547,5 +1551,3 @@ function convertMgmtConfigVars()
 	}
 	return implode (',', $ret);
 }
-
-?>

@@ -2103,11 +2103,11 @@ $dictionary = array
 	2211 => array ('chapter_id' => 12, 'dict_value' => 'Cisco%GPASS%CGS-2520-24TC'),
 	2212 => array ('chapter_id' => 12, 'dict_value' => 'Linksys%GPASS%SRW2024P'),
 	2213 => array ('chapter_id' => 12, 'dict_value' => 'HP ProCurve%GPASS%2920-48G J9728A'),
-	2214 => array ('chapter_id' => 12, 'dict_value' => '[[Edge-Core%GPASS%AS6700-32X | http://www.edge-core.com/ProdDtl.asp?sno=435&AS6700-32X%20with%20ONIE]]'),
-	2215 => array ('chapter_id' => 12, 'dict_value' => '[[Edge-Core%GPASS%AS6701-32X | http://www.edge-core.com/ProdDtl.asp?sno=435&AS6700-32X%20with%20ONIE]]'),
-	2216 => array ('chapter_id' => 12, 'dict_value' => '[[Edge-Core%GPASS%AS5610-52X | http://www.edge-core.com/ProdDtl.asp?sno=436&AS5610-52X%20with%20ONIE]]'),
-	2217 => array ('chapter_id' => 12, 'dict_value' => '[[Edge-Core%GPASS%AS5600-52X | http://www.edge-core.com/ProdDtl.asp?sno=423&AS5600-52X%20with%20ONIE]]'),
-	2218 => array ('chapter_id' => 12, 'dict_value' => '[[Edge-Core%GPASS%AS4600-54T | http://www.edge-core.com/ProdDtl.asp?sno=425&AS4600-54T%20with%20ONIE]]'),
+	2214 => array ('chapter_id' => 12, 'dict_value' => 'Edge-Core%GPASS%AS6700-32X'),
+	2215 => array ('chapter_id' => 12, 'dict_value' => 'Edge-Core%GPASS%AS6701-32X'),
+	2216 => array ('chapter_id' => 12, 'dict_value' => 'Edge-Core%GPASS%AS5610-52X'),
+	2217 => array ('chapter_id' => 12, 'dict_value' => 'Edge-Core%GPASS%AS5600-52X'),
+	2218 => array ('chapter_id' => 12, 'dict_value' => 'Edge-Core%GPASS%AS4600-54T'),
 	2219 => array ('chapter_id' => 12, 'dict_value' => 'Cisco%GPASS%Catalyst 2960-Plus 48TC-S'),
 	2220 => array ('chapter_id' => 31, 'dict_value' => 'Cisco%GPASS%UCS 5108 AC2 Blade Chassis%L4,2H%'),
 	2221 => array ('chapter_id' => 31, 'dict_value' => 'Cisco%GPASS%UCS 5108 DC2 Blade Chassis%L4,2H%'),
@@ -2598,6 +2598,11 @@ $dictionary = array
 	2705 => array ('chapter_id' => 13, 'dict_value' => '[[OpenBSD%GSKIP%OpenBSD 6.1 | http://www.openbsd.org/61.html]]'),
 	2706 => array ('chapter_id' => 12, 'dict_value' => 'Huawei%GPASS%CE8850-32CQ-EI'),
 	2707 => array ('chapter_id' => 13, 'dict_value' => 'MicroSoft%GSKIP%Windows Server 2016'),
+<<<<<<< HEAD
+=======
+	2708 => array ('chapter_id' => 11, 'dict_value' => '[[SuperMicro%GPASS%6028R-E1CR12L | https://www.supermicro.com/products/system/2u/6028/ssg-6028r-e1cr12l.cfm]]'),
+	2709 => array ('chapter_id' => 31, 'dict_value' => '[[SuperMicro%GPASS%2028TP-HC0R-SIOM | https://www.supermicro.com/products/system/2U/2028/SYS-2028TP-HC0R-SIOM.cfm]]'),
+>>>>>>> racktables/master
 
 >>>>>>> racktables/maintenance-0.20.x
 
@@ -2606,5 +2611,3 @@ $dictionary = array
 # and dictionary updates working properly.
 	49999 => array ('chapter_id' => 13, 'dict_value' => '[[RH Fedora%GSKIP%Fedora 15 | http://docs.fedoraproject.org/release-notes/f15/en-US/html/]]'),
 );
-
-?>

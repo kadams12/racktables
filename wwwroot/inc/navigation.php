@@ -659,7 +659,7 @@ $tabhandler['tagtree']['default'] = 'renderTagTree';
 $tabhandler['tagtree']['edit'] = 'renderTagTreeEditor';
 $tabhandler['tagtree']['resolve'] = 'renderGraphCycleResolver';
 $ophandler['tagtree']['edit']['createTag'] = 'tableHandler';
-$ophandler['tagtree']['edit']['destroyTag'] = 'tableHandler';
+$ophandler['tagtree']['edit']['destroyTag'] = 'destroyTag';
 $ophandler['tagtree']['edit']['updateTag'] = 'updateTag';
 $ophandler['tagtree']['resolve']['updateTag'] = 'updateTag';
 $trigger['tagtree']['resolve'] = 'triggerGraphCycleResolver';
@@ -918,5 +918,3 @@ $ajaxhandler['autocomplete'] = 'getAutocompleteListAJAX';
 $popuphandler['objlist'] = 'renderPopupObjectSelector';
 $popuphandler['portlist'] = 'renderPopupPortSelector';
 $popuphandler['inet4list'] = 'renderPopupIPv4Selector';
-
-?>

@@ -393,8 +393,10 @@ $opspec_list['tagtree-edit-createTag'] = array
 		array ('url_argname' => 'tag_name', 'table_colname' => 'tag', 'assertion' => 'tag'),
 		array ('url_argname' => 'parent_id', 'assertion' => 'uint0', 'translator' => 'nullIfZero'),
 		array ('url_argname' => 'is_assignable', 'assertion' => 'enum/yesno'),
+		array ('url_argname' => 'color', 'assertion' => 'htmlcolor0', 'translator' => 'HTMLColorForDatabase'),
 	),
 );
+// Used through an intermediate ophandler function that calls tableHandler().
 $opspec_list['tagtree-edit-destroyTag'] = array
 (
 	'table' => 'TagTree',
@@ -1374,7 +1376,7 @@ function updateObjectAttributes ($object_id)
 {
 	$type_id = getObjectType ($object_id);
 	$oldvalues = getAttrValues ($object_id);
-	$num_attrs = isset ($_REQUEST['num_attrs']) ? $_REQUEST['num_attrs'] : 0;
+	$num_attrs = genericAssertion ('num_attrs', 'uint0');
 	for ($i = 0; $i < $num_attrs; $i++)
 	{
 		$attr_id = genericAssertion ("${i}_attr_id", 'uint');
@@ -1382,10 +1384,10 @@ function updateObjectAttributes ($object_id)
 			throw new InvalidRequestArgException ('attr_id', $attr_id, 'malformed request');
 		$value = genericAssertion ("${i}_value", 'string0');
 
-		// If the object is a rack, skip certain attributes as they are handled elsewhere
-		// (height, sort_order)
+		// If the object is a rack, certain attributes (height, sort_order) never normally
+		// appear in this subset of the request arguments as they are processed elsewhere.
 		if ($type_id == 1560 && ($attr_id == 27 || $attr_id == 29))
-			continue;
+			throw new RackTablesError ('unexpected special meaning attr_id', RackTablesError::INTERNAL);
 
 		// Delete attribute and move on, when the field is empty or if the field
 		// type is a dictionary and it is the "--NOT SET--" value of 0.
@@ -1398,23 +1400,40 @@ function updateObjectAttributes ($object_id)
 			continue;
 		}
 
-		// The value could be uint/float, but we don't know ATM. Let SQL
-		// server check this and complain.
-		if ('date' == $oldvalues[$attr_id]['type'])
-			$value = timestampFromDatetimestr (genericAssertion ("${i}_value", 'datetime'));
-
-		switch ($oldvalues[$attr_id]['type'])
+		try
 		{
+			switch ($oldvalues[$attr_id]['type'])
+			{
 			case 'uint':
+				genericAssertion ("${i}_value", 'uint0');
+				$oldvalue = $oldvalues[$attr_id]['value'];
+				break;
 			case 'float':
+				genericAssertion ("${i}_value", 'decimal0');
+				$oldvalue = $oldvalues[$attr_id]['value'];
+				break;
 			case 'string':
+				// already checked above
+				$oldvalue = $oldvalues[$attr_id]['value'];
+				break;
 			case 'date':
+				$value = timestampFromDatetimestr (genericAssertion ("${i}_value", 'datetime'));
 				$oldvalue = $oldvalues[$attr_id]['value'];
 				break;
 			case 'dict':
+				// Not 'uint0' as 0 is handled above.
+				genericAssertion ("${i}_value", 'uint');
 				$oldvalue = $oldvalues[$attr_id]['key'];
 				break;
 			default:
+				throw new RackTablesError ('Unexpected attribute type', RackTablesError::INTERNAL);
+			}
+		}
+		catch (InvalidRequestArgException $irae)
+		{
+			// The submitted form may include a number of changes hence the error message
+			// must use same term as the form label (before the conversion it is the input name).
+			throw new InvalidRequestArgException ($oldvalues[$attr_id]['name'], $irae->getValue(), $irae->getReason());
 		}
 		if ($value === $oldvalue) // ('' == 0), but ('' !== 0)
 			continue;
@@ -2207,7 +2226,8 @@ function updateTag ()
 			genericAssertion ('tag_id', 'uint'),
 			genericAssertion ('tag_name', 'tag'),
 			genericAssertion ('parent_id', 'uint0'),
-			genericAssertion ('is_assignable', 'enum/yesno')
+			genericAssertion ('is_assignable', 'enum/yesno'),
+			genericAssertion ('color', 'htmlcolor0')
 		);
 	}
 	catch (InvalidArgException $iae)
@@ -3144,7 +3164,8 @@ function updVSTRule()
 	}
 	catch (Exception $e)
 	{
-		// Every case that is soft-processed in process.php, will have the working copy available for a retry.
+		// Every case that is soft-processed in index.php?module=redirect will have
+		// the working copy available for a retry.
 		if ($e instanceof InvalidRequestArgException || $e instanceof RTDatabaseError)
 		{
 			startSession();
@@ -3833,4 +3854,16 @@ function updateVLANDomain()
 	showSuccess ("VLAN domain updated successfully");
 }
 
-?>
+function destroyTag()
+{
+	global $taglist;
+	$tag_id = genericAssertion ('tag_id', 'uint');
+
+	if (isset ($taglist[$tag_id]) && isset ($taglist[$tag_id]['color']))
+	{
+		// remove all rack thumbnails
+		usePreparedDeleteBlade ('RackThumbnail', array ('1' => '1'));
+	}
+
+	tableHandler();
+}

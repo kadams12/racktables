@@ -17,6 +17,8 @@ require_once 'slb-interface.php';
 
 define ('RE_STATIC_URI', '#^(?:[[:alnum:]]+[[:alnum:]_.-]*/)+[[:alnum:]\._-]+\.([[:alpha:]]+)$#');
 
+$color = array();
+
 function castRackImageException ($e)
 {
 	$m = array
@@ -139,11 +141,13 @@ function createTrueColorOrThrow ($context, $width, $height)
 	return $img;
 }
 
-# Generate a complete HTTP response for a 1:1 minirack image, use and update
-# SQL cache where appropriate.
+// Generate a complete HTTP response for a 1:1 minirack image, use and update
+// SQL cache where appropriate. Suppress SQL cache update failures caused by
+// insufficient database privileges as that likely means a connection that is
+// read-only on purpose.
 function dispatchMiniRackThumbRequest ($rack_id)
 {
-	if (NULL !== ($thumbcache = loadThumbCache ($rack_id)))
+	if (NULL !== ($thumbcache = loadRackThumbCache ($rack_id)))
 	{
 		header ('Content-Type: image/png');
 		echo $thumbcache;
@@ -154,20 +158,101 @@ function dispatchMiniRackThumbRequest ($rack_id)
 	$capture = ob_get_clean();
 	header ('Content-Type: image/png');
 	echo $capture;
-	usePreparedExecuteBlade
-	(
-		'REPLACE INTO RackThumbnail SET rack_id=?, thumb_data=?',
-		array ($rack_id, base64_encode ($capture))
-	);
+	try
+	{
+		saveRackThumbCache ($rack_id, $capture);
+	}
+	catch (RTDBTableAccessDenied $e)
+	{
+		// keep going
+	}
+}
+
+function coloredObject($entity, $img, $posx, $posy, $height, $width, $vertical = TRUE)
+{
+	global $color;
+
+	if ($entity == NULL)
+		return;
+
+	$colors = $entity['colors'];
+	$count = count ($colors);
+	if ($count == 0)
+	{
+		imagefilledrectangle
+		(
+			$img,
+			$posx,
+			$posy,
+			$posx + $width - 1,
+			$posy + $height - 1,
+			$color[array_fetch ($entity, 'state', 'T')]
+		);
+		return;
+	}
+
+	$colorsize = (($vertical ? $width : $height) - 1) / $count;
+	$diagonal = 1;
+
+	$i = 0;
+	foreach ($colors as $colorcode)
+	{
+		if (!isset ($color[$colorcode]))
+			$color[$colorcode] = colorFromHex ($img, $colorcode);
+
+		if ($vertical)
+			$points = array
+			(
+				$posx + $i * $colorsize + ($i > 0 ? $diagonal : 0),
+				$posy,
+
+				$posx + $i * $colorsize - ($i > 0 ?  $diagonal : 0),
+				$posy + $height - 1,
+
+				$posx + ($i+1) * $colorsize - ($i+1 < $count ? $diagonal : 0),
+				$posy + $height - 1,
+
+				$posx + ($i+1) * $colorsize + ($i+1 < $count ? $diagonal : 0),
+				$posy
+                        );
+		else
+			$points = array
+			(
+				$posx,
+				$posy + $i * $colorsize + ($i > 0 ? $diagonal : 0),
+
+				$posx + $width - 1,
+				$posy + $i * $colorsize - ($i > 0 ?  $diagonal : 0),
+
+				$posx + $width - 1,
+				$posy + ($i+1) * $colorsize - ($i+1 < $count ? $diagonal : 0),
+
+				$posx,
+				$posy + ($i+1) * $colorsize + ($i+1 < $count ? $diagonal : 0)
+			);
+
+		imagefilledpolygon
+		(
+			$img,
+			$points,
+			4,
+			$color[$colorcode]
+		);
+
+		$i++;
+	}
 }
 
 # Generate a binary PNG image for a rack contents.
 function printRackThumbImage ($rack_id, $scale = 1, $object_id = NULL)
 {
+	global $color;
 	$rackData = spotEntity ('rack', $rack_id);
 	amplifyCell ($rackData);
 	if ($object_id !== NULL)
 		highlightObject ($rackData, $object_id);
+	markAllSpans ($rackData);
+	setEntityColors ($rackData);
 	global $rtwidth;
 	$offset[0] = 3;
 	$offset[1] = 3 + $rtwidth[0];
@@ -175,9 +260,9 @@ function printRackThumbImage ($rack_id, $scale = 1, $object_id = NULL)
 	$totalheight = 3 + 3 + $rackData['height'] * 2;
 	$totalwidth = $offset[2] + $rtwidth[2] + 3;
 	$img = createTrueColorOrThrow ('rack_php_gd_error', $totalwidth, $totalheight);
-	# It was measured, that caching palette in an array is faster, than
-	# calling colorFromHex() multiple times. It matters, when user's
-	# browser is trying to fetch many minirack images in parallel.
+	// It has been benchmarked that caching the palette in an array is faster than just
+	// calling colorFromHex() again and again. The diffierence is visible when user's
+	// browser is trying to fetch many minirack images in parallel.
 	$color = array
 	(
 		'F' => colorFromHex ($img, '8fbfbf'),
@@ -190,25 +275,57 @@ function printRackThumbImage ($rack_id, $scale = 1, $object_id = NULL)
 		'black' => colorFromHex ($img, '000000'),
 		'gray' => colorFromHex ($img, 'c0c0c0'),
 	);
-	$border_color = ($rackData['has_problems'] == 'yes') ? $color['Thw'] : $color['gray'];
+
+	// keep for compatibility
+	if ($rackData['has_problems'] == 'yes')
+			$rackData['colors'][] = 'ff8080';
+
 	imagerectangle ($img, 0, 0, $totalwidth - 1, $totalheight - 1, $color['black']);
-	imagerectangle ($img, 1, 1, $totalwidth - 2, $totalheight - 2, $border_color);
+	coloredObject ($rackData, $img, 1, 1, $totalheight - 2,  $totalwidth - 2, false);
 	imagerectangle ($img, 2, 2, $totalwidth - 3, $totalheight - 3, $color['black']);
+	imagefilledrectangle ($img, 3, 3, $totalwidth - 4, $totalheight - 4, $color['F']);
 	for ($unit_no = 1; $unit_no <= $rackData['height']; $unit_no++)
 		for ($locidx = 0; $locidx < 3; $locidx++)
 		{
-			$colorcode = $rackData[$unit_no][$locidx]['state'];
-			if (isset ($rackData[$unit_no][$locidx]['hl']))
-				$colorcode = $colorcode . $rackData[$unit_no][$locidx]['hl'];
-			imagerectangle
-			(
-				$img,
-				$offset[$locidx],
-				3 + ($rackData['height'] - $unit_no) * 2,
-				$offset[$locidx] + $rtwidth[$locidx] - 1,
-				3 + ($rackData['height'] - $unit_no) * 2 + 1,
-				$color[$colorcode]
-			);
+			if (isset ($rackData[$unit_no][$locidx]['skipped']))
+				continue;
+
+			if (isset ($rackData[$unit_no][$locidx]['colspan']))
+			{
+				$locwidth = 0;
+				for($i = 0; $i<$rackData[$unit_no][$locidx]['colspan']; $i++)
+					$locwidth += $rtwidth[$locidx + $i];
+			}
+			else
+				$locwidth = $rtwidth[$locidx];
+
+			$locheight = 2;
+			if (isset ($rackData[$unit_no][$locidx]['rowspan']))
+			{
+				$locheight = $rackData[$unit_no][$locidx]['rowspan'] * 2;
+			}
+
+			$object_id = (isset ($rackData[$unit_no][$locidx]['object_id']) ? $rackData[$unit_no][$locidx]['object_id'] : NULL);
+			if ($object_id)
+			{
+				$object = spotEntity ('object', $object_id);
+				setEntityColors ($object);
+				coloredObject ($object, $img, $offset[$locidx], 3 + ($rackData['height'] - $unit_no) * 2, $locheight,  $locwidth);
+			}
+			else
+			{
+				$state = $rackData[$unit_no][$locidx]['state'];
+				if (isset ($rackData[$unit_no][$locidx]['hl']))
+					$state = $state . $rackData[$unit_no][$locidx]['hl'];
+
+				$entity = array(
+					'id' => $state,
+					'colors' => array(),
+					'state' => $state
+				);
+
+				coloredObject ($entity, $img, $offset[$locidx], 3 + ($rackData['height'] - $unit_no) * 2, $locheight,  $locwidth);
+			}
 		}
 	if ($scale > 1)
 	{
@@ -357,7 +474,8 @@ function renderImagePreview ($file_id)
 function printStatic404()
 {
 	header ('HTTP/1.0 404 Not Found');
-?><!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">
+	echo <<<ENDOFTEXT
+<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">
 <html><head>
 <title>404 Not Found</title>
 </head><body>
@@ -365,7 +483,8 @@ function printStatic404()
 <p>The requested file was not found in this instance.</p>
 <hr>
 <address>RackTables static content proxy</address>
-</body></html><?php
+</body></html>
+ENDOFTEXT;
 	exit;
 }
 
@@ -409,7 +528,7 @@ function proxyCactiRequest ($server_id, $graph_id)
 	$ret = array();
 	$servers = getCactiServers();
 	if (! array_key_exists ($server_id, $servers))
-		throw new InvalidRequestArgException ('server_id', $server_id);
+		throw new InvalidRequestArgException ('server_id', $server_id, 'there is no such server');
 	$cacti_url = $servers[$server_id]['base_url'];
 	$url = "${cacti_url}/graph_image.php?action=view&local_graph_id=${graph_id}&rra_id=" . getConfigVar ('CACTI_RRA_ID');
 	$postvars = 'action=login&login_username=' . $servers[$server_id]['username'];
@@ -490,7 +609,7 @@ function proxyMuninRequest ($server_id, $graph)
 	$ret = array();
 	$servers = getMuninServers();
 	if (! array_key_exists ($server_id, $servers))
-		throw new InvalidRequestArgException ('server_id', $server_id);
+		throw new InvalidRequestArgException ('server_id', $server_id, 'there is no such server');
 	$munin_url = $servers[$server_id]['base_url'];
 	$url = "${munin_url}/${domain}/${host}.${domain}/${graph}-day.png";
 
@@ -557,5 +676,3 @@ function printSVGMessageBar ($text = 'lost message', $textattrs = array(), $rect
 	echo ">${text}</text>\n";
 	echo "</svg>\n";
 }
-
-?>

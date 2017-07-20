@@ -177,18 +177,31 @@ function assertUIntArg ($argname, $allow_zero = FALSE)
 {
 	if (!isset ($_REQUEST[$argname]))
 		throw new InvalidRequestArgException($argname, '', 'parameter is missing');
-	if (!is_numeric ($_REQUEST[$argname]))
-		throw new InvalidRequestArgException($argname, $_REQUEST[$argname], 'parameter is not a number');
-	if ($_REQUEST[$argname] < 0)
-		throw new InvalidRequestArgException($argname, $_REQUEST[$argname], 'parameter is less than zero');
-	if (! $allow_zero && $_REQUEST[$argname] == 0)
-		throw new InvalidRequestArgException($argname, $_REQUEST[$argname], 'parameter is zero');
+	if (! isUnsignedInteger ($_REQUEST[$argname], $allow_zero))
+		throw new InvalidRequestArgException ($argname, $_REQUEST[$argname], 'parameter is not an unsigned integer' . ($allow_zero ? ' (or 0)' : ''));
 	return $_REQUEST[$argname];
 }
 
+// Tell whether the argument is a decimal integer (or, alternatively, a numeric
+// string with a decimal integer).
 function isInteger ($arg, $allow_zero = FALSE)
 {
-	return is_numeric ($arg) && ($allow_zero || $arg != 0);
+	// In PHP 7.0.0 and later is_numeric() rejects a string that contains
+	// a hexadecimal number, help PHP 5 achieve the same result here.
+	return is_numeric ($arg) &&
+		(! is_string ($arg) || FALSE === mb_strstr ($arg, '0x')) &&
+		is_int (0 + $arg) &&
+		($allow_zero || $arg != 0);
+}
+
+function isUnsignedInteger ($arg, $allow_zero = FALSE)
+{
+	return isInteger ($arg, $allow_zero) && $arg >= 0;
+}
+
+function isHTMLColor ($color)
+{
+	return 1 == preg_match ('/^[0-9A-F]{6}$/i', $color);
 }
 
 # Make sure the arg is a parsable date, return its UNIX timestamp equivalent
@@ -443,6 +456,15 @@ function genericAssertion ($argname, $argtype)
 		if (! $expr = compileExpression ($sic[$argname]))
 			throw new InvalidRequestArgException ($argname, $sic[$argname], 'not a valid RackCode expression');
 		return $expr;
+	case 'htmlcolor0':
+		if ('' == assertStringArg ($argname, TRUE))
+			return '';
+		// fall through
+	case 'htmlcolor':
+		$argvalue = assertStringArg ($argname);
+		if (! isHTMLColor ($argvalue))
+			throw new InvalidRequestArgException ($argname, $argvalue, 'not an HTML color');
+		return $argvalue;
 	default:
 		throw new InvalidArgException ('argtype', $argtype); // comes not from user's input
 	}
@@ -598,26 +620,20 @@ function markAllSpans (&$rackData)
 // descending) and mark the best (if any).
 function markBestSpan (&$rackData, $i)
 {
-	global $template, $templateWidth;
-	for ($j = 0; $j < 6; $j++)
+	global $templateWidth;
+	$height = array();
+	$square = array();
+	foreach ($templateWidth as $j => $width)
 	{
 		$height[$j] = rectHeight ($rackData, $i, $j);
-		$square[$j] = $height[$j] * $templateWidth[$j];
+		$square[$j] = $height[$j] * $width;
 	}
 	// find the widest rectangle of those with maximal height
-	$maxsquare = max ($square);
-	if (!$maxsquare)
+	if (0 == $maxsquare = max ($square))
 		return FALSE;
-	$best_template_index = 0;
-	for ($j = 0; $j < 6; $j++)
-		if ($square[$j] == $maxsquare)
-		{
-			$best_template_index = $j;
-			$bestheight = $height[$j];
-			break;
-		}
+	$best_template_index = array_search ($maxsquare, $square);
 	// distribute span marks
-	markSpan ($rackData, $i, $bestheight, $best_template_index);
+	markSpan ($rackData, $i, $height[$best_template_index], $best_template_index);
 	return TRUE;
 }
 
@@ -642,10 +658,10 @@ function applyObjectMountMask (&$rackData, $object_id)
 // check permissions for rack modification
 function rackModificationPermitted ($rackData, $op, $with_context=TRUE)
 {
-	$op_annex = array (array ('tag' => '$op_'.$op), array ('tag' => '$any_op'));
-	$rack_op_annex = array_merge ($rackData['etags'], $rackData['itags'], $rackData['atags'], $op_annex);
-	$context = !$with_context || permitted (NULL, NULL, NULL, $op_annex);
-	return $context && permitted (NULL, NULL, NULL, $rack_op_annex);
+	if ($with_context && ! permitted (NULL, NULL, $op))
+		return FALSE;
+	$rack_op_annex = array_merge ($rackData['etags'], $rackData['itags'], $rackData['atags']);
+	return permitted (NULL, NULL, $op, $rack_op_annex);
 }
 
 // Design change means transition between 'F' and 'A' and back.
@@ -973,6 +989,31 @@ function l2addressFromDatabase ($string)
 		default:
 			return $string;
 	}
+}
+
+function HTMLColorForDatabase ($string)
+{
+	$ret = 0;
+	// The HTTP request coming through the opspec declaration will indicate an undefined
+	// color value with an empty string, PHP code in addition to that is likely to use
+	// NULL, which comes from the database.
+	if ($string === NULL || $string === '')
+		return NULL;
+	if (! isHTMLColor ($string) || 1 != sscanf (mb_strtoupper ($string), '%06X', $ret))
+		throw new InvalidArgException ('string', $string, 'not an HTML color');
+	return $ret;
+}
+
+// No code currently depends on this function, it is here for completeness.
+function HTMLColorFromDatabase ($u)
+{
+	if ($u === NULL)
+		return NULL;
+	if (! isUnsignedInteger ($u, TRUE))
+		throw new InvalidArgException ('u', $u, 'not an unsigned integer');
+	if ($u > 0xFFFFFF)
+		throw new InvalidArgException ('u', $u, 'value out of range');
+	return sprintf ('%06X', $u);
 }
 
 // DEPRECATED, remove in 0.21.0
@@ -1791,6 +1832,7 @@ function getObjectiveTagTree ($tree, $realm, $preselect)
 				'tag' => $taginfo['tag'],
 				'parent_id' => $taginfo['parent_id'],
 				'refcnt' => $taginfo['refcnt'],
+				'color' => $taginfo['color'],
 				'kids' => $subsearch
 			);
 		else
@@ -3242,7 +3284,7 @@ function getAllVLANOptions ($except = array())
 	return $ret;
 }
 
-// Let's have this debug helper here to enable debugging of process.php w/o interface.php.
+// This debugging helper does not depend on interface.php.
 function dump ($var)
 {
 	echo '<div align=left><pre>';
@@ -4851,10 +4893,10 @@ function sortPortList ($plist, $name_in_value = FALSE)
 			'numidx' => count ($numbers),
 			'index' => $numbers,
 			'idx_parent' => $parent,
-			'iif_id' => isset($plist[$pkey]['iif_id']) ? $plist[$pkey]['iif_id'] : 0,
-			'label' => isset($plist[$pkey]['label']) ? $plist[$pkey]['label'] : '',
-			'l2address' => isset($plist[$pkey]['l2address']) ? $plist[$pkey]['l2address'] : '',
-			'id' => isset($plist[$pkey]['id']) ? $plist[$pkey]['id'] : 0,
+			'iif_id' => array_fetch ($pvalue, 'iif_id', 0),
+			'label' => array_fetch ($pvalue, 'label', ''),
+			'l2address' => array_fetch ($pvalue, 'l2address', ''),
+			'id' => array_fetch ($pvalue, 'id', 0),
 			'name' => $pn,
 		);
 	}
@@ -4865,12 +4907,9 @@ function sortPortList ($plist, $name_in_value = FALSE)
 }
 
 // This function works like standard php usort function and uses sortPortList.
-function usort_portlist(&$array)
+function usort_portlist (&$portnames)
 {
-	$temp_array = array();
-	foreach($array as $portname)
-		$temp_array[$portname] = 1;
-	$array = array_keys (sortPortList ($temp_array, FALSE));
+	$portnames = array_keys (sortPortList (array_fill_keys ($portnames, array())));
 }
 
 // return a "?, ?, ?, ... ?, ?" string consisting of N question marks
@@ -5350,12 +5389,12 @@ function loadConfigDefaults()
 	$ret = loadConfigCache();
 	if (!count ($ret))
 		throw new RackTablesError ('Failed to load configuration from the database.', RackTablesError::INTERNAL);
-	foreach ($ret as $varname => &$row)
+	foreach (array_keys ($ret) as $varname)
 	{
-		$row['is_altered'] = 'no';
-		if ($row['vartype'] == 'uint')
-			$row['varvalue'] = 0 + $row['varvalue'];
-		$row['defaultvalue'] = $row['varvalue'];
+		$ret[$varname]['is_altered'] = 'no';
+		if ($ret[$varname]['vartype'] == 'uint')
+			$ret[$varname]['varvalue'] = 0 + $ret[$varname]['varvalue'];
+		$ret[$varname]['defaultvalue'] = $ret[$varname]['varvalue'];
 	}
 	return $ret;
 }
@@ -5834,6 +5873,8 @@ function array_sub ($a, $b)
 // returns the requested element value or the default value if not found
 function array_fetch ($array, $key, $default_value)
 {
+	if (! is_array ($array))
+		throw new InvalidArgException ('array', $array, 'is not an array');
 	return array_key_exists ($key, $array) ? $array[$key] : $default_value;
 }
 
@@ -6670,5 +6711,3 @@ function syncObjectPorts ($object_id, $desiredPorts)
 	$dbxlink->exec ('UNLOCK TABLES');
 	showSuccess (sprintf ('Added ports: %u, changed: %u, deleted: %u', count ($to_add), count ($to_update), count ($to_delete)));
 }
-
-?>
