@@ -32,6 +32,8 @@ $templateWidth[3] = 1;
 $templateWidth[4] = 1;
 $templateWidth[5] = 1;
 
+$message_buffering = FALSE;
+
 define ('CHAP_OBJTYPE', 1);
 // The latter matches both SunOS and Linux-styled formats.
 define ('RE_L2_IFCFG', '/^[0-9a-f]{1,2}(:[0-9a-f]{1,2}){5}$/i');
@@ -303,6 +305,10 @@ function genericAssertion ($argname, $argtype)
 		return assertUIntArg ($argname);
 	case 'uint0':
 		return assertUIntArg ($argname, TRUE);
+	case 'decimal0':
+		if ('' == assertStringArg ($argname, TRUE))
+			return '';
+		// fall through
 	case 'decimal':
 		if (! preg_match ('/^\d+(\.\d+)?$/', assertStringArg ($argname)))
 			throw new InvalidRequestArgException ($argname, $sic[$argname], 'format error');
@@ -456,9 +462,14 @@ function isCheckSet ($input_name, $mode = 'bool')
 
 // Validate and return "bypass" value for the current context, if one is
 // defined for it, or NULL otherwise.
+// There is at least one bit of code that depends on the NULL return value
+// (although it does not explicitly check for it), it is the "interface" case
+// in index.php, which makes an unconditional call to here. Changing this
+// function to throw an exception instead will require changing at least
+// that code too.
 function getBypassValue()
 {
-	global $page, $pageno, $sic;
+	global $page, $pageno;
 	if (!array_key_exists ('bypass', $page[$pageno]))
 		return NULL;
 	if (!array_key_exists ('bypass_type', $page[$pageno]))
@@ -3235,7 +3246,7 @@ function getAllVLANOptions ($except = array())
 function dump ($var)
 {
 	echo '<div align=left><pre>';
-	print_r ($var);
+	var_dump ($var);
 	echo '</pre></div>';
 }
 
@@ -3336,6 +3347,14 @@ function getUnlinkedPortTypeOptions ($port_iif_id)
 		return $cache[$port_iif_id];
 
 	$ret = array();
+	$seen_oifs = array();
+	$ambiguous_oifs = array();
+	foreach ($compat as $row)
+	{
+		if (isset ($seen_oifs[$row['oif_id']]))
+			$ambiguous_oifs[$row['oif_id']] = 1;
+		$seen_oifs[$row['oif_id']] = 1;
+	}
 	foreach ($compat as $row)
 	{
 		if ($row['iif_id'] == $prefs['iif_pick'] || $row['iif_id'] == $port_iif_id)
@@ -3346,7 +3365,11 @@ function getUnlinkedPortTypeOptions ($port_iif_id)
 			continue;
 		if (!array_key_exists ($optgroup, $ret))
 			$ret[$optgroup] = array();
-		$ret[$optgroup][$row['iif_id'] . '-' . $row['oif_id']] = $row['oif_name'];
+		if (isset ($ambiguous_oifs[$row['oif_id']]) && $optgroup == 'other')
+			$name = $row['iif_name'] . ' / ' . $row['oif_name'];
+		else
+			$name = $row['oif_name'];
+		$ret[$optgroup][$row['iif_id'] . '-' . $row['oif_id']] = $name;
 	}
 
 	$cache[$port_iif_id] = $ret;
@@ -3489,6 +3512,9 @@ function iosParseVLANString ($string)
 // with requested column set to given value (or NULL if there is none such).
 // Note that 0 and NULL mean completely different things and thus
 // require strict checking (=== and !===).
+// Also note that this is not a 1:1 reinvention of PHP's array_search() as
+// this function looks one level deeper (which could be done by means of
+// array_column(), which appears only in PHP 5 >= 5.5.0).
 function scanArrayForItem ($table, $scan_column, $scan_value)
 {
 	foreach ($table as $key => $row)
@@ -4685,6 +4711,16 @@ function formatPortIIFOIF ($port)
 	return $ret;
 }
 
+// Not an equivalent of the above but related.
+function parsePortIIFOIF ($port_type)
+{
+	if (preg_match ('/^([[:digit:]]+)-([[:digit:]]+)$/', $port_type, $matches))
+		return array ($matches[1], $matches[2]);
+	if (preg_match ('/^([[:digit:]]+)$/', $port_type, $matches))
+		return array (1, $matches[1]);
+	throw new InvalidArgException ('port_type', $port_type, 'format error');
+}
+
 // returns '<a...</a>' html string containing a link to specified port or object.
 // link title is "hostname portname" if both parts are defined
 function formatPortLink($host_id, $hostname, $port_id, $portname, $a_class = '')
@@ -5190,10 +5226,10 @@ function showNotice  ($message, $option = '')
 // $type could be 'error', 'warning', 'success' or 'neutral'
 function setMessage ($type, $message, $direct_rendering)
 {
-	global $script_mode;
+	global $script_mode, $message_buffering;
 	if ($direct_rendering)
 		echo '<div class="msg_' . $type . '">' . $message . '</div>';
-	elseif (isset ($script_mode) && $script_mode)
+	elseif (isset ($script_mode) && $script_mode && !$message_buffering)
 	{
 		if ($type == 'warning' || $type == 'error')
 			file_put_contents ('php://stderr', strtoupper ($type) . ': ' . strip_tags ($message) . "\n");
@@ -5227,6 +5263,42 @@ function showOneLiner ($code, $args = array())
 	if (! empty ($args))
 		$line['a'] = $args;
 	$log_messages[] = $line;
+}
+
+// Works only in $script_mode == TRUE
+function setMessageBuffering ($state)
+{
+	global $message_buffering;
+	$message_buffering = $state;
+}
+
+function flushMessageBuffer()
+{
+	global $log_messages, $script_mode;
+
+	if (!isset ($script_mode) || !$script_mode)
+		return;
+
+	$code_str_map = array
+	(
+		100 => 'ERROR',
+		200 => 'WARNING',
+	);
+
+	foreach ($log_messages as $line)
+		if (isset ($code_str_map[$line['c']]))
+		{
+			$type = $code_str_map[$line['c']];
+			$message = strip_tags (implode ("\n", $line['a']));
+			file_put_contents ('php://stderr', $type . ': ' . $message . "\n");
+		}
+	$log_messages = array();
+}
+
+function clearMessageBuffer()
+{
+	global $log_messages;
+	$log_messages = array();
 }
 
 function showFuncMessage ($callfunc, $status, $log_args = array())
@@ -5397,9 +5469,19 @@ function getObjectTypeChangeOptions ($object_id)
 
 // Gets the timestamp and returns human-friendly short message describing the time difference
 // between the current system time and the specified timestamp (like '2d 5h ago')
+function formatAgeTimestamp ($timestamp)
+{
+	return formatAgeSeconds (time() - $timestamp);
+}
+
+// For backward compatibility.
 function formatAge ($timestamp)
 {
-	$seconds = time() - $timestamp;
+	return formatAgeTimestamp ($timestamp);
+}
+
+function formatAgeSeconds ($seconds)
+{
 	switch (TRUE)
 	{
 		case $seconds < 1:
@@ -5409,7 +5491,7 @@ function formatAge ($timestamp)
 		case $seconds <= 300:
 			$mins = intval ($seconds / 60);
 			$secs = $seconds % 60;
-			return ($secs ? "{$mins}min ${secs}s" : "{$mins}m") . ' ago';
+			return ($secs ? "{$mins}min ${secs}s" : "{$mins}min") . ' ago';
 		case $seconds < 3600:
 			return round ($seconds / 60) . 'min' . ' ago';
 		case $seconds < 3 * 3600:
@@ -6066,11 +6148,6 @@ function inverseRackUnit ($unit_no, $rack_cell)
 	return $unit_no;
 }
 
-function isCLIMode ()
-{
-	return !isset ($_SERVER['REQUEST_METHOD']);
-}
-
 // returns true either if given domains are the same
 // or if one is a group and other is its member
 function sameDomains ($domain_id_1, $domain_id_2)
@@ -6119,10 +6196,9 @@ function checkPortRole ($vswitch, $portinfo, $port_name, $port_order)
 
 	if (! $remote_auto && ! $local_auto)
 		return TRUE;
-	elseif ($remote_auto && $local_auto && $local_auto != $remote_auto && sameDomains ($vswitch['domain_id'], $remote_vswitch['domain_id']))
+	if ($remote_auto && $local_auto && $local_auto != $remote_auto && sameDomains ($vswitch['domain_id'], $remote_vswitch['domain_id']))
 		return TRUE; // auto-calc link ends must belong to the same domain
-	else
-		return FALSE;
+	return FALSE;
 }
 
 # Convert InvalidArgException to InvalidRequestArgException with a choice of
@@ -6511,19 +6587,7 @@ function textareaCooked ($text)
 // Call this function just like commitAddPort except the first argument
 function addDesiredPort (&$desiredPorts, $port_name, $port_type_id, $port_label, $port_l2address)
 {
-	switch (1)
-	{
-	case preg_match ('/^([[:digit:]]+)-([[:digit:]]+)$/', $port_type_id, $matches):
-		$iif_id = $matches[1];
-		$oif_id = $matches[2];
-		break;
-	case preg_match ('/^([[:digit:]]+)$/', $port_type_id, $matches):
-		$iif_id = 1;
-		$oif_id = $matches[1];
-		break;
-	default:
-		throw new InvalidArgException ('port_type_id', $port_type_id, 'format error');
-	}
+	list ($iif_id, $oif_id) = parsePortIIFOIF ($port_type_id);
 	$desiredPorts["{$port_name}-{$iif_id}"] = array (
 		'name' => $port_name,
 		'iif_id' => $iif_id,
@@ -6537,55 +6601,74 @@ function addDesiredPort (&$desiredPorts, $port_name, $port_type_id, $port_label,
 // $desiredPorts is a list of ports in getObjectPortsAndLinks format.
 // required port fields are name, iif_id, oif_id, label and l2address.
 // $desiredPorts can be filled by addDesiredPort function using commitAddPort format
-function syncObjectPorts ($objectInfo, $desiredPorts)
+function syncObjectPorts ($object_id, $desiredPorts)
 {
 	global $dbxlink;
-	$real_ports = array();
-	$dbxlink->beginTransaction();
-	$portlist = fetchPortList ("Port.object_id = ? FOR UPDATE", array ($objectInfo['id']));
-	$added = $deleted = $changed = 0;
-	foreach ($portlist as $port)
+	$to_delete = $to_update = $real_ports = array();
+
+	// The check that does not require access to the database goes first.
+	foreach (array_keys ($desiredPorts) as $k)
+		$desiredPorts[$k]['l2address'] = l2AddressForDatabase ($desiredPorts[$k]['l2address']);
+
+	// Further processing must be done with exclusive access to the table. Even when the
+	// only changes requested are to add ports w/o MAC addresses or to update existing
+	// ports in a way that does not introduce new MAC addresses, it is impossible to
+	// tell reliably which ports require which actions without locking the table first.
+	$dbxlink->exec ('LOCK TABLES Port WRITE, PortLog WRITE, Link READ');
+	foreach (getObjectPortsAndLinksTerse ($object_id) as $port)
 	{
 		$key = "{$port['name']}-{$port['iif_id']}";
-		if (!isset ($desiredPorts[$key]))
+		if (! array_key_exists ($key, $desiredPorts))
 		{
-			if ($port['linked'])
-				showWarning (sprintf ("Port %s should be deleted, but it's used", formatPort ($port)));
-			else
-			{
-				usePreparedDeleteBlade ('Port', array ('id' => $port['id']));
-				$deleted++;
-			}
+			$to_delete[] = $port;
 			continue;
 		}
-		if (l2addressForDatabase ($port['l2address']) != l2addressForDatabase ($desiredPorts[$key]['l2address']) ||
-			$port['label'] != $desiredPorts[$key]['label'])
-		{
-			commitUpdatePort (
-				$objectInfo['id'],
+		if ($port['l2address'] != $desiredPorts[$key]['l2address'] || $port['label'] != $desiredPorts[$key]['label'])
+			$to_update[$key] = $port;
+		$real_ports[$key] = 1;
+	}
+	$to_add = array_diff_key ($desiredPorts, $real_ports);
+
+	try
+	{
+		assertUniqueL2Addresses (reduceSubarraysToColumn (array_merge ($to_update, $to_add), 'l2address'), $object_id);
+		// Make the actual changes.
+		foreach ($to_delete as $port)
+			if ($port['link_count'] != 0)
+				showWarning (sprintf ("Port %s should be deleted, but it's used", formatPort ($port)));
+			else
+				usePreparedDeleteBlade ('Port', array ('id' => $port['id']));
+		foreach ($to_update as $key => $port)
+			commitUpdatePortReal
+			(
+				$object_id,
 				$port['id'],
 				$port['name'],
-				"{$port['iif_id']}-{$port['oif_id']}",
+				$port['iif_id'],
+				$port['oif_id'],
 				$desiredPorts[$key]['label'],
 				$desiredPorts[$key]['l2address'],
 				$port['reservation_comment']
 			);
-			$changed++;
-		}
-		$real_ports[$key] = 1;
+		foreach ($to_add as $key => $port)
+			commitAddPortReal
+			(
+				$object_id,
+				$port['name'],
+				$port['iif_id'],
+				$port['oif_id'],
+				$port['label'],
+				$port['l2address']
+			);
 	}
-	foreach ($desiredPorts as $key => $port)
+	catch (Exception $e)
 	{
-		if (!isset ($real_ports[$key]))
-		{
-			$type_id = "{$port['iif_id']}-{$port['oif_id']}";
-			commitAddPort ($objectInfo['id'], $port['name'], $type_id, $port['label'], $port['l2address']);
-			$added++;
-		}
+		$dbxlink->exec ('UNLOCK TABLES');
+		throw $e;
 	}
-	$dbxlink->commit();
 
-	showSuccess ("Added ports: {$added}, changed: {$changed}, deleted: {$deleted}");
+	$dbxlink->exec ('UNLOCK TABLES');
+	showSuccess (sprintf ('Added ports: %u, changed: %u, deleted: %u', count ($to_add), count ($to_update), count ($to_delete)));
 }
 
 ?>

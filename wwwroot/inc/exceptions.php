@@ -150,15 +150,6 @@ class RackTablesError extends Exception
 	}
 }
 
-class L2AddressException extends RTDatabaseError
-{
-	function __construct ($message)
-	{
-		$this->code = parent::DB_WRITE_FAILED;
-		parent::__construct ($message);
-	}
-}
-
 class EntityNotFoundException extends RackTablesError
 {
 	function __construct ($realm, $id)
@@ -168,7 +159,7 @@ class EntityNotFoundException extends RackTablesError
 	public function dispatch()
 	{
 		global $debug_mode;
-		if ($debug_mode)
+		if (isset ($debug_mode) && $debug_mode)
 		{
 			printGenericException ($this);
 			return;
@@ -313,7 +304,7 @@ class RTImageError extends RackTablesError
 	}
 	public function dispatch()
 	{
-		header ('Content-type: image/png');
+		header ('Content-Type: image/png');
 		echo $this->imgbin;
 	}
 }
